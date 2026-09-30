@@ -57,7 +57,7 @@ mvn spring-boot:run
 
 Le premier appel montre pourquoi le modèle d'équipement compte : F28 n'a pas la même signification chez les deux fabricants de la documentation d'exemple. Le quatrième appel porte sur une information absente de la documentation : l'assistant doit le dire au lieu d'inventer.
 
-Exemple de réponse :
+Forme de la réponse (valeurs indicatives) :
 
 ```json
 {
