@@ -3,29 +3,29 @@ package com.example.techassist.kb;
 import org.springframework.ai.document.Document;
 
 /**
- * Extrait de documentation renvoye par la Knowledge Base.
+ * Documentation excerpt returned by the Knowledge Base.
  *
- * @param text       contenu du passage
- * @param sourceUri  document d'origine (s3://...)
- * @param score      score de pertinence renvoye par la Knowledge Base
- * @param fabricant  metadonnee fabricant (peut etre null)
- * @param modele     metadonnee modele d'equipement (peut etre null)
+ * @param text          passage content
+ * @param sourceUri     source document (s3://...)
+ * @param score         relevance score returned by the Knowledge Base
+ * @param manufacturer  manufacturer metadata (may be null)
+ * @param model         equipment model metadata (may be null)
  */
-public record Passage(String text, String sourceUri, Double score, String fabricant, String modele) {
+public record Passage(String text, String sourceUri, Double score, String manufacturer, String model) {
 
     public static Passage from(Document document) {
         var meta = document.getMetadata();
         return new Passage(document.getText(),
                 (String) meta.get(ManagedKnowledgeBaseVectorStore.SOURCE_URI),
                 document.getScore(),
-                (String) meta.get("fabricant"),
-                (String) meta.get("modele"));
+                (String) meta.get("manufacturer"),
+                (String) meta.get("model"));
     }
 
-    /** Nom de fichier lisible pour la citation. */
+    /** Readable file name for the citation. */
     public String documentName() {
         if (sourceUri == null) {
-            return "document inconnu";
+            return "unknown document";
         }
         int slash = sourceUri.lastIndexOf('/');
         return slash >= 0 ? sourceUri.substring(slash + 1) : sourceUri;

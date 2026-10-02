@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.IntStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,37 +16,34 @@ import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.ai.vectorstore.filter.Filter;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
 /**
- * Scenario "appel LLM classique" : un {@code Retrieve} sur la Knowledge Base managee, un appel au
- * modele, puis un controle d'ancrage.
+ * "Classic LLM call" scenario, in three steps:
+ * <ol>
+ *   <li>Retrieval: {@code Retrieve} on the managed Knowledge Base, through a Spring AI {@link VectorStore}.</li>
+ *   <li>Generation: Spring AI {@link ChatClient} (Bedrock Converse) with the domain prompt.</li>
+ *   <li>Grounding check: {@code ApplyGuardrail} (AWS SDK), see {@link GroundingGuard}.</li>
+ * </ol>
  *
- * <ul>
- *   <li>Recherche : {@link VectorStore} Spring AI, implemente sur la Knowledge Base managee.</li>
- *   <li>Generation : {@link ChatClient} Spring AI sur Bedrock Converse.</li>
- *   <li>Controle d'ancrage : {@code ApplyGuardrail} (SDK AWS), voir {@link GroundingGuard}.</li>
- * </ul>
- *
- * <p>La recherche est faite explicitement (et non par {@code QuestionAnswerAdvisor}) pour deux
- * raisons : ne pas appeler le modele quand la documentation ne contient rien, et reutiliser les
- * memes passages comme source de verite du controle d'ancrage.
+ * <p>Retrieval is done explicitly (not through {@code QuestionAnswerAdvisor}) so that the exact
+ * same passages are reused as the grounding source, and so that the model is not called when the
+ * documentation contains nothing.
  */
 @Service
 public class AnswerService {
 
+    // User-facing messages stay in French: the technicians are French speakers.
     static final String NOT_FOUND_MESSAGE = "Je ne trouve pas cette information dans la documentation disponible.";
     static final String BLOCKED_MESSAGE = "Je ne peux pas donner de réponse fiable à partir de la documentation disponible. "
             + "Reformulez la question ou précisez le modèle de l'équipement.";
 
-    /** Metadonnee posee sur chaque document (fichier .metadata.json). */
-    static final String MODEL_ATTRIBUTE = "modele";
-    /** Valeur portee par les documents transverses, par exemple les procedures de securite. */
-    static final String ALL_MODELS = "Tous";
+    /** Metadata set on each document (.metadata.json file). "ALL" marks cross-model documents. */
+    static final String MODEL_ATTRIBUTE = "model";
+    static final String ALL_MODELS = "ALL";
 
     private static final Logger log = LoggerFactory.getLogger(AnswerService.class);
 
@@ -56,104 +54,70 @@ public class AnswerService {
     private final String systemPrompt;
 
     public AnswerService(VectorStore documentation, ChatClient chatClient, GroundingGuard guard,
-            TechAssistProperties props, @Value("classpath:prompts/system-prompt.md") Resource systemPromptResource) {
+            TechAssistProperties props, @Value("classpath:prompts/system-prompt.md") Resource systemPrompt) {
         this.documentation = documentation;
         this.chatClient = chatClient;
         this.guard = guard;
         this.props = props;
-        this.systemPrompt = read(systemPromptResource);
+        this.systemPrompt = read(systemPrompt);
     }
 
     public Answer ask(String question, String equipmentModel) {
         long start = System.currentTimeMillis();
 
+        // 1. Retrieval
         List<Passage> passages = documentation.similaritySearch(searchRequest(question, equipmentModel)).stream()
                 .map(Passage::from)
                 .toList();
-
         if (passages.isEmpty()) {
-            long latency = System.currentTimeMillis() - start;
-            log.info("question_answered status=NOT_FOUND passages=0 latencyMs={}", latency);
-            return new Answer(NOT_FOUND_MESSAGE, Answer.Status.NOT_FOUND, List.of(),
-                    new Answer.Usage(null, 0, 0, 0, latency), null);
+            return done(new Answer(NOT_FOUND_MESSAGE, Answer.Status.NOT_FOUND, List.of(),
+                    usage(null, start, 0), null));
         }
 
+        // 2. Generation
         String context = formatDocumentation(passages);
-        String userMessage = "<documentation>\n" + context + "\n</documentation>\n\n<question>\n"
-                + (equipmentModel == null || equipmentModel.isBlank()
-                        ? ""
-                        : "Équipement : " + asData(equipmentModel.trim()) + "\n")
-                + asData(question) + "\n</question>";
-
         ChatResponse response = chatClient.prompt()
                 .system(systemPrompt)
-                .user(userMessage)
+                .user(userMessage(context, question, equipmentModel))
                 .call()
                 .chatResponse();
-        String text = response == null || response.getResult() == null || response.getResult().getOutput() == null
-                ? null
-                : response.getResult().getOutput().getText();
+        String text = Objects.requireNonNullElse(response.getResult().getOutput().getText(), "");
 
-        Usage usage = response == null || response.getMetadata() == null ? null : response.getMetadata().getUsage();
-        int in = usage != null && usage.getPromptTokens() != null ? usage.getPromptTokens() : 0;
-        int out = usage != null && usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0;
-
-        // Refus impose par le prompt (phrase exacte) : remonte comme NOT_FOUND, sans payer le
-        // controle d'ancrage. Seule la phrase exacte est acceptee : un refus suivi d'autre
-        // contenu passe par le controle comme une reponse normale.
-        if (text != null && text.strip().equals(NOT_FOUND_MESSAGE)) {
-            long latency = System.currentTimeMillis() - start;
-            log.info("question_answered status=NOT_FOUND passages={} model={} inputTokens={} outputTokens={} latencyMs={}",
-                    passages.size(), props.modelId(), in, out, latency);
-            return new Answer(NOT_FOUND_MESSAGE, Answer.Status.NOT_FOUND, List.of(),
-                    new Answer.Usage(props.modelId(), in, out, 0, latency), null);
+        // Exact refusal required by the prompt: nothing to check. An empty answer, on the other
+        // hand, goes through the grounding check, which blocks it (it cannot be evaluated).
+        if (text.strip().equals(NOT_FOUND_MESSAGE)) {
+            return done(new Answer(NOT_FOUND_MESSAGE, Answer.Status.NOT_FOUND, List.of(),
+                    usage(response, start, 0), null));
         }
 
-        // Query du controle d'ancrage = la question seule (limite de 1 000 caracteres).
-        GroundingGuard.Verdict verdict;
-        if (!props.guardrailEnabled()) {
-            verdict = GroundingGuard.Verdict.DISABLED;
+        // 3. Grounding check: the answer is only shown if it is grounded in the passages.
+        GroundingGuard.Verdict verdict = guard.check(context, question, text);
+        Answer.Grounding grounding = new Answer.Grounding(verdict.grounding(), verdict.relevance());
+        Answer.Usage usage = usage(response, start, verdict.textUnits());
+        if (verdict.blocked()) {
+            return done(new Answer(BLOCKED_MESSAGE, Answer.Status.BLOCKED, List.of(), usage, grounding));
         }
-        else if (text == null || text.isBlank()) {
-            verdict = GroundingGuard.Verdict.NOT_EVALUATED;
-        }
-        else {
-            verdict = guard.check(context, question, text);
-        }
-        boolean blocked = verdict.blocked() || text == null || text.isBlank();
-        long latency = System.currentTimeMillis() - start;
-
-        log.info("question_answered status={} passages={} model={} inputTokens={} outputTokens={} "
-                        + "groundingScore={} relevanceScore={} guardrailUnits={} latencyMs={}",
-                blocked ? "BLOCKED" : "ANSWERED", passages.size(), props.modelId(), in, out,
-                verdict.grounding(), verdict.relevance(), verdict.textUnits(), latency);
-
-        Answer.Grounding grounding = props.guardrailEnabled()
-                ? new Answer.Grounding(verdict.grounding(), verdict.relevance())
-                : null;
-        Answer.Usage answerUsage = new Answer.Usage(props.modelId(), in, out, verdict.textUnits(), latency);
-        if (blocked) {
-            return new Answer(BLOCKED_MESSAGE, Answer.Status.BLOCKED, List.of(), answerUsage, grounding);
-        }
-        // Refus suivi d'une explication : controle comme une reponse (fail-closed), puis remonte
-        // en NOT_FOUND, sans sources, pour que l'application le distingue d'une vraie reponse.
-        if (text.strip().startsWith(NOT_FOUND_MESSAGE)) {
-            return new Answer(text, Answer.Status.NOT_FOUND, List.of(), answerUsage, grounding);
-        }
-        return new Answer(text, Answer.Status.ANSWERED, toSources(passages), answerUsage, grounding);
+        return done(new Answer(text, Answer.Status.ANSWERED, toSources(passages), usage, grounding));
     }
 
     SearchRequest searchRequest(String question, String equipmentModel) {
         SearchRequest.Builder request = SearchRequest.builder().query(question).topK(props.maxResults());
         if (equipmentModel != null && !equipmentModel.isBlank()) {
-            // Documentation du modele + documents transverses (securite, procedures).
+            // Documentation of this model + cross-model documents (safety, procedures).
             FilterExpressionBuilder b = new FilterExpressionBuilder();
-            Filter.Expression filter = b.or(
+            request.filterExpression(b.or(
                     b.eq(MODEL_ATTRIBUTE, equipmentModel.trim()),
-                    b.eq(MODEL_ATTRIBUTE, ALL_MODELS)).build();
-            request.filterExpression(filter);
+                    b.eq(MODEL_ATTRIBUTE, ALL_MODELS)).build());
         }
         return request.build();
+    }
+
+    static String userMessage(String context, String question, String equipmentModel) {
+        String equipment = equipmentModel == null || equipmentModel.isBlank()
+                ? ""
+                : "Equipment: " + asData(equipmentModel.trim()) + "\n";
+        return "<documentation>\n" + context + "\n</documentation>\n\n<question>\n"
+                + equipment + asData(question) + "\n</question>";
     }
 
     static String formatDocumentation(List<Passage> passages) {
@@ -161,8 +125,8 @@ public class AnswerService {
         for (int i = 0; i < passages.size(); i++) {
             Passage p = passages.get(i);
             sb.append("[").append(i + 1).append("] ").append(asData(p.documentName()));
-            if (p.modele() != null) {
-                sb.append(" (modèle : ").append(asData(p.modele())).append(")");
+            if (p.model() != null) {
+                sb.append(" (model: ").append(asData(p.model())).append(")");
             }
             sb.append("\n").append(asData(p.text())).append("\n\n");
         }
@@ -170,18 +134,35 @@ public class AnswerService {
     }
 
     /**
-     * Neutralise les chevrons : un document ou une question ne peut pas fermer la balise
-     * {@code <documentation>} ni ouvrir une fausse section d'instructions. Le prompt systeme
-     * precise en plus que ce contenu est une donnee, jamais une instruction.
+     * Neutralises angle brackets: a document or a question cannot close the {@code <documentation>}
+     * tag. The system prompt also states that this content is data.
      */
     static String asData(String text) {
         return text == null ? "" : text.replace("<", "‹").replace(">", "›");
     }
 
+    private Answer.Usage usage(ChatResponse response, long start, int guardrailUnits) {
+        Usage usage = response == null ? null : response.getMetadata().getUsage();
+        int in = usage != null && usage.getPromptTokens() != null ? usage.getPromptTokens() : 0;
+        int out = usage != null && usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0;
+        return new Answer.Usage(response == null ? null : props.modelId(), in, out, guardrailUnits,
+                System.currentTimeMillis() - start);
+    }
+
+    /** One log line per question: status, consumption and scores (never the technician's text). */
+    private static Answer done(Answer a) {
+        log.info("question_answered status={} sources={} inputTokens={} outputTokens={} guardrailUnits={} "
+                        + "groundingScore={} relevanceScore={} latencyMs={}",
+                a.status(), a.sources().size(), a.usage().inputTokens(), a.usage().outputTokens(),
+                a.usage().guardrailUnits(), a.grounding() == null ? null : a.grounding().groundingScore(),
+                a.grounding() == null ? null : a.grounding().relevanceScore(), a.usage().latencyMs());
+        return a;
+    }
+
     private static List<Answer.Source> toSources(List<Passage> passages) {
         return IntStream.range(0, passages.size())
                 .mapToObj(i -> new Answer.Source(i + 1, passages.get(i).documentName(),
-                        passages.get(i).modele(), passages.get(i).score()))
+                        passages.get(i).model(), passages.get(i).score()))
                 .toList();
     }
 
@@ -190,7 +171,7 @@ public class AnswerService {
             return resource.getContentAsString(StandardCharsets.UTF_8);
         }
         catch (IOException e) {
-            throw new UncheckedIOException("System prompt introuvable", e);
+            throw new UncheckedIOException("System prompt not found", e);
         }
     }
 }

@@ -1,14 +1,14 @@
-# ---------- Bucket de documentation source ----------
+# ---------- Source documentation bucket ----------
 
-# Demo : chiffrement SSE-S3, pas de replication cross-region, d'access logging ni de
-# notifications. A ajouter avant une mise en production (voir README, "Passage en production").
+# Demo: SSE-S3 encryption, no cross-Region replication, access logging or notifications.
+# Add them before going to production (see README, "Going to production").
 resource "aws_s3_bucket" "docs" {
-  #checkov:skip=CKV_AWS_145:demo, SSE-S3 suffisant (KMS CMK en production)
-  #checkov:skip=CKV_AWS_144:demo mono-region
-  #checkov:skip=CKV_AWS_18:demo, access logging en production
-  #checkov:skip=CKV2_AWS_62:demo, pas de traitement evenementiel
+  #checkov:skip=CKV_AWS_145:demo, SSE-S3 is enough (KMS CMK in production)
+  #checkov:skip=CKV_AWS_144:single-Region demo
+  #checkov:skip=CKV_AWS_18:demo, access logging in production
+  #checkov:skip=CKV2_AWS_62:demo, no event processing
   bucket_prefix = "${var.project_name}-docs-"
-  # Demo : le bucket et ses versions sont supprimes par terraform destroy.
+  # Demo: the bucket and its versions are deleted by terraform destroy.
   force_destroy = true
 }
 
@@ -83,13 +83,13 @@ resource "aws_s3_bucket_policy" "docs" {
   depends_on = [aws_s3_bucket_public_access_block.docs]
 }
 
-# ---------- Documentation (notices + metadonnees) ----------
-# Chaque notice a un fichier <notice>.metadata.json a cote d'elle : la Knowledge Base en lit
-# les attributs (modele, fabricant) qui servent au filtrage par equipement.
+# ---------- Documentation (manuals + metadata) ----------
+# Each manual has a <manual>.metadata.json file next to it: the Knowledge Base reads its
+# attributes (model, manufacturer), used to filter by equipment.
 
 locals {
-  # fileset accepte les alternatives {a,b} (doc Terraform fileset) : verifie, 8 fichiers trouves
-  # dans sample-docs/ (4 notices + 4 metadonnees).
+  # fileset accepts {a,b} alternatives (Terraform fileset docs): checked, 8 files found
+  # in sample-docs/ (4 manuals + 4 metadata files).
   doc_files = fileset(var.docs_path, "**/*.{md,json,pdf,txt}")
   content_types = {
     md   = "text/markdown; charset=utf-8"

@@ -27,6 +27,6 @@ output "model_id" {
 }
 
 output "application_policy_arn" {
-  description = "A attacher au role IAM du backend."
+  description = "To attach to the backend IAM role."
   value       = aws_iam_policy.application.arn
 }

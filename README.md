@@ -1,72 +1,74 @@
-# Assistant technicien : Spring AI + Amazon Bedrock Managed Knowledge Base (Java)
+# Technician assistant: Spring AI + Amazon Bedrock Managed Knowledge Base (Java)
 
-Démonstrateur d'un assistant qui répond aux questions d'un technicien de maintenance à partir de la documentation technique des fabricants (notices, codes défauts, procédures), et uniquement à partir d'elle.
+Demo of an assistant that answers a maintenance technician's questions from the manufacturers' technical documentation (manuals, fault codes, procedures), and only from it.
 
-C'est le **scénario 1 : appel LLM classique**. Le service fait une recherche dans la Knowledge Base, un appel au modèle, puis un contrôle d'ancrage de la réponse. Le scénario 2 (agent sur AgentCore Runtime) est dans le dépôt `agentcore-managed-kb-agent-java` et réutilise la même Knowledge Base.
+This is **scenario 1: classic LLM call**. The service runs a Knowledge Base search, one model call, then a grounding check on the answer. Scenario 2 (agent on AgentCore Runtime) lives in the `agentcore-managed-kb-agent-java` repository and reuses the same Knowledge Base.
 
-Socle : **Java 25, Spring Boot 4.1, Spring AI 2.0.1**, Claude Haiku 4.5 (profil d'inférence `eu.`), région `eu-west-1`, infrastructure en **Terraform**.
+Stack: **Java 25, Spring Boot 4.1, Spring AI 2.0.1**, Claude Haiku 4.5 (`eu.` inference profile), Region `eu-west-1`, infrastructure in **Terraform**.
+
+The sample documentation and the answers are in French: the target users are French-speaking technicians. Code, comments and docs are in English.
 
 ![Architecture](docs/scenario-1-llm-managed-kb.png)
 
-## Comment ça marche
+## How it works
 
-1. **Recherche** : `VectorStore` Spring AI, implémenté sur la Managed Knowledge Base (`ManagedKnowledgeBaseVectorStore`). Si le modèle de l'équipement est connu, la recherche est filtrée sur ce modèle (métadonnée `modele`), plus les documents transverses comme les procédures de sécurité.
-2. **Génération** : `ChatClient` Spring AI sur Bedrock Converse, avec un prompt métier en markdown (`src/main/resources/prompts/system-prompt.md`) et les extraits numérotés.
-3. **Contrôle d'ancrage** : `ApplyGuardrail` (Amazon Bedrock Guardrails, contextual grounding) vérifie que la réponse est fondée sur les extraits et pertinente pour la question. Sinon, elle est remplacée par un message neutre. Le contrôle **bloque par défaut** : une évaluation absente ou incomplète (pas de score, texte hors limites, garde-fou mal configuré) bloque la réponse, et l'application refuse de démarrer si `GUARDRAIL_ID` ou `GUARDRAIL_VERSION` manque. Le désactiver demande un choix explicite (`GROUNDING_CHECK=false`).
-4. La réponse revient avec ses sources, les scores d'ancrage et la consommation (tokens, unités de garde-fou), pour suivre le coût par question.
+1. **Retrieval**: a Spring AI `VectorStore` implemented on the Managed Knowledge Base (`ManagedKnowledgeBaseVectorStore`). When the equipment model is known, the search is filtered on that model (`model` metadata), plus cross-model documents such as safety procedures (`model = ALL`).
+2. **Generation**: Spring AI `ChatClient` on Bedrock Converse, with a domain prompt in markdown (`src/main/resources/prompts/system-prompt.md`) and the numbered excerpts.
+3. **Grounding check**: `ApplyGuardrail` (Amazon Bedrock Guardrails, contextual grounding) checks that the answer is grounded in the excerpts and relevant to the question. Otherwise it is replaced by a neutral message. The check **fails closed**: a missing or incomplete evaluation (no score, text out of limits) blocks the answer. It is mandatory: the application refuses to start without `GUARDRAIL_ID` and `GUARDRAIL_VERSION`.
+4. The answer comes back with its sources, grounding scores and consumption (tokens, guardrail units), to track the cost per question.
 
-Si la recherche ne renvoie aucun extrait, le modèle n'est pas appelé : réponse `NOT_FOUND`, sans coût d'inférence.
+If the search returns no excerpt, the model is not called: `NOT_FOUND`, no inference cost.
 
-## Spring AI ou SDK AWS : l'approche hybride, couche par couche
+## Spring AI or AWS SDK: a hybrid approach, layer by layer
 
-Le spike Dak Tech a comparé Spring AI et le SDK AWS. Les deux conclusions étaient justes : Spring AI réduit le code et garde le modèle interchangeable, le SDK suit Bedrock sans retard. On prend donc le meilleur des deux à chaque couche.
+Spring AI and the AWS SDK each have a strength: Spring AI reduces code and keeps the model swappable, the SDK follows Bedrock without delay. So we take the best of each at every layer.
 
-| Couche | Choix | Pourquoi |
+| Layer | Choice | Why |
 |---|---|---|
-| Prompt, appel au modèle | Spring AI `ChatClient` | Moins de code, modèle changeable par configuration |
-| Abstraction de recherche | Spring AI `VectorStore`, `SearchRequest`, expressions de filtre | Code applicatif indépendant du moteur de recherche |
-| `Retrieve` sur la Knowledge Base managée | SDK AWS (`bedrockagentruntime`), encapsulé dans `ManagedKnowledgeBaseVectorStore` | Le vector store Bedrock Knowledge Base de Spring AI 2.0.1 envoie toujours `vectorSearchConfiguration`, refusé par une Knowledge Base managée |
-| Contrôle d'ancrage | SDK AWS (`bedrockruntime` `ApplyGuardrail`) | Spring AI 2.0.1 ne transmet ni `guardrailConfig` ni les blocs `guardContent` à Converse (vérifié dans `BedrockChatOptions` 2.0.1). `ApplyGuardrail` est l'API AWS prévue pour un garde-fou indépendant du modèle |
+| Prompt, model call | Spring AI `ChatClient` | Less code, model changed by configuration |
+| Retrieval abstraction | Spring AI `VectorStore`, `SearchRequest`, filter expressions | Application code independent from the search engine |
+| `Retrieve` on the managed Knowledge Base | AWS SDK (`bedrockagentruntime`), wrapped in `ManagedKnowledgeBaseVectorStore` | The Spring AI 2.0.1 Bedrock Knowledge Base vector store always sends `vectorSearchConfiguration`, which a managed Knowledge Base rejects |
+| Grounding check | AWS SDK (`bedrockruntime` `ApplyGuardrail`) | Spring AI 2.0.1 passes neither `guardrailConfig` nor `guardContent` blocks to Converse (checked in `BedrockChatOptions` 2.0.1). `ApplyGuardrail` is the AWS API for a model-independent guardrail |
 
-Règle retenue : **Spring AI là où il fait gagner du temps, le SDK là où Bedrock avance plus vite que Spring AI.** Le jour où Spring AI couvre la Knowledge Base managée ou les garde-fous, on remplace une classe, le reste du code ne bouge pas.
+Rule: **Spring AI where it saves time, the SDK where Bedrock moves faster than Spring AI.** When Spring AI covers managed Knowledge Bases or guardrails, one class is replaced and the rest of the code does not move.
 
-La recherche est appelée explicitement plutôt que via `QuestionAnswerAdvisor`, pour deux raisons : ne pas appeler le modèle quand la documentation ne contient rien, et réutiliser exactement les mêmes extraits comme source de vérité du contrôle d'ancrage.
+Retrieval is called explicitly rather than through `QuestionAnswerAdvisor`, for two reasons: do not call the model when the documentation contains nothing, and reuse exactly the same excerpts as the source of truth of the grounding check.
 
-### Pourquoi deux appels (recherche puis génération), et pas un seul
+### Why two calls (retrieval then generation) instead of one
 
-Une Knowledge Base managée s'interroge avec `Retrieve` (`managedSearchConfiguration`) ou avec la récupération agentique (`AgenticRetrieveStream`). `vectorSearchConfiguration` et `RetrieveAndGenerate` sont ceux des Knowledge Bases vectorielles : c'est l'erreur rencontrée dans le spike. `RetrieveAndGenerate` enchaîne lui aussi une recherche et une génération côté service : passer à deux appels ajoute surtout un aller-retour réseau, négligeable devant la génération. Le volume de tokens dépend du prompt construit (le nôtre ajoute un prompt métier), et le contrôle d'ancrage est facturé à part. En échange, on garde la main sur le prompt métier, le modèle, le garde-fou et le format de réponse.
+A managed Knowledge Base is queried with `Retrieve` (`managedSearchConfiguration`) or with agentic retrieval (`AgenticRetrieveStream`). `vectorSearchConfiguration` and `RetrieveAndGenerate` belong to vector Knowledge Bases. `RetrieveAndGenerate` also chains a search and a generation on the service side: moving to two calls mostly adds one network round trip, negligible next to generation. The token volume depends on the prompt you build (ours adds a domain prompt), and the grounding check is billed separately. In exchange, you keep control of the domain prompt, the model, the guardrail and the answer format.
 
 ```java
 SearchRequest.builder()
         .query("Que signifie le code F28 ?")
         .topK(5)
-        .filterExpression(b.or(b.eq("modele", "Condensa 24"), b.eq("modele", "Tous")).build())
+        .filterExpression(b.or(b.eq("model", "Condensa 24"), b.eq("model", "ALL")).build())
         .build();
-// -> Retrieve avec managedSearchConfiguration { numberOfResults: 5, filter: orAll[...] }
+// -> Retrieve with managedSearchConfiguration { numberOfResults: 5, filter: orAll[...] }
 ```
 
-## Prérequis
+## Prerequisites
 
-- Compte AWS, région `eu-west-1`, accès au modèle Claude Haiku 4.5 activé dans Amazon Bedrock
-- Terraform 1.9 ou plus (provider `hashicorp/aws` 6.67 ou plus), AWS CLI v2, `jq`
+- AWS account, Region `eu-west-1`, access to Claude Haiku 4.5 enabled in Amazon Bedrock
+- Terraform 1.9 or later (provider `hashicorp/aws` 6.67 or later), AWS CLI v2, `jq`
 - Java 25, Maven 3.9
 
-## Déployer
+## Deploy
 
 ```bash
-AWS_PROFILE=<profil> EXPECTED_ACCOUNT_ID=<compte> ./scripts/deploy.sh
+AWS_PROFILE=<profile> EXPECTED_ACCOUNT_ID=<account> ./scripts/deploy.sh
 ```
 
-Le script fait un `terraform apply` dans `infra/` (bucket chiffré, documentation `sample-docs/`, Knowledge Base managée avec son connecteur S3, garde-fou d'ancrage, politique IAM applicative), lance l'indexation et écrit la configuration locale dans `.deploy/outputs.sh`.
+The script runs `terraform apply` in `infra/` (encrypted bucket, `sample-docs/` documentation, managed Knowledge Base with its S3 connector, grounding guardrail, application IAM policy), starts the indexing and writes the local configuration to `.deploy/outputs.sh`.
 
-| Fichier Terraform | Contenu |
+| Terraform file | Content |
 |---|---|
-| `storage.tf` | Bucket de documentation (chiffrement, versioning, accès public bloqué, TLS obligatoire) et chargement des notices avec leurs `.metadata.json` |
-| `knowledge_base.tf` | Rôle de service, Knowledge Base `type = "MANAGED"`, source de données `MANAGED_KNOWLEDGE_BASE_CONNECTOR` (S3) |
-| `guardrail.tf` | Garde-fou contextual grounding (seuils ancrage et pertinence) et sa version publiée |
-| `application_iam.tf` | Politique à attacher au rôle du backend : `Retrieve`, profil d'inférence EU, `ApplyGuardrail` |
+| `storage.tf` | Documentation bucket (encryption, versioning, public access blocked, TLS required) and upload of the manuals with their `.metadata.json` |
+| `knowledge_base.tf` | Service role, Knowledge Base `type = "MANAGED"`, data source `MANAGED_KNOWLEDGE_BASE_CONNECTOR` (S3) |
+| `guardrail.tf` | Contextual grounding guardrail (grounding and relevance thresholds) and its published version |
+| `application_iam.tf` | Policy to attach to the backend role: `Retrieve`, EU inference profile, `ApplyGuardrail` |
 
-## Lancer et tester
+## Run and test
 
 ```bash
 source .deploy/outputs.sh
@@ -78,38 +80,40 @@ mvn spring-boot:run
 ./scripts/ask.sh "Je sens une odeur de gaz en arrivant, que faire ?"
 ```
 
-- **F28 sans modèle** : F28 n'a pas la même signification sur les deux chaudières de la documentation. L'assistant donne les deux et demande le modèle.
-- **F28 avec le modèle** : réponse unique, sourcée.
-- **Odeur de gaz** : la consigne de sécurité passe en premier (règle du prompt métier).
-- **Question hors documentation** : `NOT_FOUND`, l'assistant le dit au lieu d'inventer.
+- **F28 without a model**: F28 does not mean the same thing on the two boilers of the documentation. The assistant gives both and asks for the model.
+- **F28 with the model**: a single, sourced answer.
+- **Gas smell**: the safety instruction comes first (domain prompt rule).
+- **Question outside the documentation**: `NOT_FOUND`, the assistant says so instead of inventing.
 
-Résultats mesurés le 01/10/2026 sur cette documentation (indicatifs) :
+Results measured on this documentation (indicative):
 
-| Question | Statut | Ancrage | Pertinence | Tokens entrée / sortie | Latence |
+| Question | Status | Grounding | Relevance | Input / output tokens | Latency |
 |---|---|---|---|---|---|
-| F28 sans modèle | ANSWERED (2 modèles, demande de précision) | 0,91 | 1,0 | 2 205 / 280 | 3,8 s |
-| F28 Condensa 24 | ANSWERED | 1,0 | 1,0 | 2 239 / 149 | 2,9 s |
-| F28 Ecoline 35 | ANSWERED | 1,0 | 1,0 | 1 243 / 154 | 2,7 s |
-| CO2 à puissance max (G20), Condensa 24 | ANSWERED | 0,99 | 1,0 | 1 656 / 60 | 1,9 s |
-| Odeur de gaz (consigne de sécurité) | ANSWERED | 0,65 | 0,84 | 1 758 / 177 | 3,2 s |
-| Couple de serrage façade (absent de la doc) | NOT_FOUND | 0,94 | 1,0 | 1 287 / 59 | 1,8 s |
-| Prix d'une Condensa 24 | NOT_FOUND | 0,98 | 1,0 | 1 651 / 57 | 1,7 s |
+| F28 without a model | ANSWERED (2 models, asks which one) | 0.91 | 1.0 | 2,205 / 280 | 3.8 s |
+| F28 Condensa 24 | ANSWERED | 1.0 | 1.0 | 2,239 / 149 | 2.9 s |
+| F28 Ecoline 35 | ANSWERED | 1.0 | 1.0 | 1,243 / 154 | 2.7 s |
+| CO2 at full power (G20), Condensa 24 | ANSWERED | 0.99 | 1.0 | 1,656 / 60 | 1.9 s |
+| Gas smell (safety instruction) | ANSWERED | 0.65 | 0.84 | 1,758 / 177 | 3.2 s |
+| Front panel tightening torque (not in the doc) | refusal (see below) | n/a | n/a | 1,287 / 59 | 1.8 s |
+| Price of a Condensa 24 | refusal (see below) | n/a | n/a | 1,651 / 57 | 1.7 s |
 
-Température 0 : sur ces essais, les mêmes questions ont donné les mêmes scores d'un appel à l'autre. C'est une observation, pas une garantie (classement de la recherche et scores du garde-fou peuvent varier).
+Refusals: if the model replies with exactly the refusal sentence of the prompt, the status is `NOT_FOUND`, with no grounding check (nothing to check). If it adds an explanation, the answer goes through the check like any other and comes back as `ANSWERED` with the refusal text.
 
-Forme de la réponse :
+Temperature 0: in these runs the same questions gave the same scores from one call to the next. This is an observation, not a guarantee (search ranking and guardrail scores can vary).
+
+Answer shape:
 
 ```json
 {
   "answer": "...",
   "status": "ANSWERED",
-  "sources": [{ "index": 1, "document": "thermalys-condensa-24-notice-technique.md", "modele": "Condensa 24", "score": 0.61 }],
+  "sources": [{ "index": 1, "document": "thermalys-condensa-24-notice-technique.md", "model": "Condensa 24", "score": 0.61 }],
   "usage": { "modelId": "eu.anthropic.claude-haiku-4-5-20251001-v1:0", "inputTokens": 2172, "outputTokens": 149, "guardrailUnits": 5, "latencyMs": 3166 },
   "grounding": { "groundingScore": 1.0, "relevanceScore": 1.0 }
 }
 ```
 
-`status` vaut `ANSWERED`, `NOT_FOUND` (rien dans la documentation, ou refus exact du modèle) ou `BLOCKED` (contrôle d'ancrage sous le seuil ou impossible).
+`status` is `ANSWERED`, `NOT_FOUND` (nothing in the documentation, or exact refusal from the model) or `BLOCKED` (grounding check below threshold or not possible).
 
 ## Tests
 
@@ -117,45 +121,45 @@ Forme de la réponse :
 mvn test
 ```
 
-28 tests unitaires sans appel AWS : `Retrieve` toujours en `managedSearchConfiguration` (jamais `vectorSearchConfiguration`), traduction des filtres Spring AI (égalité, `in`, groupes, `&&`, `||`, refus explicite des opérateurs non traduits), seuil de similarité, pas d'appel au modèle sans extrait, qualificatifs du contrôle d'ancrage (`grounding_source`, `query` = la question seule, `guard_content`), blocage quand le garde-fou ne renvoie pas ses deux scores ou que le texte dépasse ses limites, refus de démarrer sans version de garde-fou, balises neutralisées dans les extraits et la question, réponse vide bloquée, refus exact remonté en `NOT_FOUND`, validation de l'API.
+27 unit tests, no AWS call: `Retrieve` always with `managedSearchConfiguration` (never `vectorSearchConfiguration`), translation of the Spring AI filters used by the demo (equality, groups, `&&`, `||`, explicit refusal of other operators), similarity threshold, no model call without excerpts, grounding check qualifiers (`grounding_source`, `query` = the question only, `guard_content`), blocking when the guardrail does not return both scores or when the text exceeds its limits, tags neutralised in excerpts and question, exact refusal reported as `NOT_FOUND`, API validation and error mapping.
 
-## Documentation d'exemple
+## Sample documentation
 
-`sample-docs/` contient une documentation **fictive** (fabricants et modèles inventés) : deux chaudières gaz où F28 n'a pas le même sens, une pompe à chaleur et une procédure de sécurité. Chaque document a un fichier `.metadata.json` (fabricant, modèle, type d'équipement, type de document) utilisé pour le filtrage. Pour de vraies notices, déposer les PDF avec le même type de fichier de métadonnées, ou brancher SharePoint, Confluence ou Google Drive comme source de la Knowledge Base. L'extraction des images (schémas) est activée sur le connecteur.
+`sample-docs/` contains **fictitious** documentation (invented manufacturers and models): two gas boilers where F28 does not mean the same thing, a heat pump and a safety procedure. Each document has a `.metadata.json` file (`manufacturer`, `model`, `equipment_type`, `document_type`) used for filtering. For real manuals, upload the PDFs with the same kind of metadata file, or connect SharePoint, Confluence or Google Drive as the Knowledge Base source. Image extraction (diagrams) is enabled on the connector.
 
-## Choix d'architecture (AWS Well-Architected)
+## Architecture choices (AWS Well-Architected)
 
-| Pilier | Ce qui est en place |
+| Pillar | What is in place |
 |---|---|
-| Sécurité | Pas de clé statique (chaîne de credentials par défaut, rôle IAM en production). Politique IAM applicative limitée à la Knowledge Base, au profil d'inférence européen et au garde-fou. Bucket chiffré, accès public bloqué, TLS obligatoire. Rôle de la Knowledge Base limité au bucket, avec conditions `aws:SourceAccount` et `aws:SourceArn`. Validation des entrées (1 000 caractères max, la limite de la query du contrôle d'ancrage). API à l'écoute de `127.0.0.1` par défaut. Extraits et question traités comme des données : chevrons neutralisés et règle explicite dans le prompt contre l'injection d'instructions. |
-| Fiabilité | Retries standard du SDK, timeouts explicites, throttling Bedrock et Knowledge Base renvoyé en 429, contrôle d'ancrage en fail-closed, indexation bornée dans le temps au déploiement, infrastructure décrite en Terraform. |
-| Efficacité des performances | Recherche hybride gérée par le service, filtrage par métadonnées, réponse courte pensée pour un écran de téléphone. |
-| Optimisation des coûts | Modèle léger par défaut (changeable sans code via `MODEL_ID`), pas d'appel au modèle sans extrait, plafond de tokens, tokens et unités de garde-fou renvoyés à chaque réponse. |
-| Excellence opérationnelle | Une ligne de log clé=valeur par question (statut, extraits, tokens, scores d'ancrage, latence), endpoint de santé, scripts de déploiement et de suppression, checkov et Semgrep sans finding bloquant. |
-| Durabilité | Services managés et serverless, pas de capacité réservée inactive. |
+| Security | No static key (default credentials chain, IAM role in production). Application IAM policy limited to the Knowledge Base, the European inference profile and the guardrail. Encrypted bucket, public access blocked, TLS required. Knowledge Base role limited to the bucket, with `aws:SourceAccount` and `aws:SourceArn` conditions. Input validation (1,000 characters max, the query limit of the grounding check). API listening on `127.0.0.1` by default. Excerpts and question treated as data: angle brackets neutralised and an explicit prompt rule against instruction injection. |
+| Reliability | Standard SDK retries, explicit timeouts, Bedrock and Knowledge Base throttling returned as 429, fail-closed grounding check, time-bounded indexing at deploy time, infrastructure described in Terraform. |
+| Performance efficiency | Hybrid search managed by the service, metadata filtering, short answers designed for a phone screen. |
+| Cost optimisation | Light model by default (changed without code through `MODEL_ID`), no model call without excerpts, token cap, tokens and guardrail units returned with each answer. |
+| Operational excellence | One key=value log line per question (status, excerpts, tokens, grounding scores, latency), health endpoint, deploy and destroy scripts, checkov and Semgrep with no blocking finding. |
+| Sustainability | Managed and serverless services, no idle reserved capacity. |
 
-## Avant la production
+## Before production
 
-- **Authentification** : l'API n'embarque pas d'authentification. Elle est conçue pour être intégrée au backend existant et exposée derrière son authentification. Ne pas l'exposer telle quelle (`SERVER_ADDRESS` ne s'ouvre que derrière cette authentification).
-- **Rôle IAM** : attacher la politique `application_policy_arn` au rôle du backend (variable Terraform `application_role_name`) et tester avec ce rôle seul, pas avec un profil administrateur.
-- **Contrôles non activés pour la démo** (marqués `checkov:skip` avec la raison dans `infra/storage.tf`) : clé KMS gérée par le client sur le bucket, journalisation des accès S3, réplication cross-region, notifications d'événements.
-- **État Terraform** : passer sur le backend S3 commenté dans `infra/versions.tf`.
-- **Réseau** : ajouter des VPC endpoints (AWS PrivateLink) pour Amazon Bedrock si le backend tourne dans des sous-réseaux privés.
-- **Évaluation** : constituer un jeu de 20 à 30 vraies questions de techniciens avec la bonne réponse, et le rejouer à chaque changement de modèle, de prompt ou de seuil.
-- **Seuils du garde-fou** : `grounding_threshold` (0,5) et `relevance_threshold` (0,5) sont à calibrer sur ce jeu d'évaluation. Mesuré ici : une réponse fidèle qui reformule une liste de consignes (odeur de gaz) score 0,65 ; à 0,7 elle était bloquée à tort. Un seuil trop haut bloque des bonnes réponses, un seuil trop bas laisse passer des approximations : seul un jeu d'évaluation réel permet de trancher.
+- **Authentication**: the API carries no authentication. It is designed to be plugged into the existing backend and exposed behind its authentication. Do not expose it as is (`SERVER_ADDRESS` only opens behind that authentication).
+- **IAM role**: attach the `application_policy_arn` policy to the backend role (Terraform variable `application_role_name`) and test with that role only, not with an admin profile.
+- **Controls not enabled for the demo** (marked `checkov:skip` with the reason in `infra/storage.tf`): customer managed KMS key on the bucket, S3 access logging, cross-Region replication, event notifications.
+- **Terraform state**: move to the S3 backend commented out in `infra/versions.tf`.
+- **Network**: add VPC endpoints (AWS PrivateLink) for Amazon Bedrock if the backend runs in private subnets.
+- **Evaluation**: build a set of 20 to 30 real technician questions with the right answer, and replay it on every change of model, prompt or threshold.
+- **Guardrail thresholds**: `grounding_threshold` (0.5) and `relevance_threshold` (0.5) must be calibrated on that evaluation set. Measured here: a faithful answer that rephrases a list of instructions (gas smell) scores 0.65; at 0.7 it was wrongly blocked. Too high blocks good answers, too low lets approximations through: only a real evaluation set can decide.
 
-## Supprimer les ressources
+## Delete the resources
 
 ```bash
-AWS_PROFILE=<profil> EXPECTED_ACCOUNT_ID=<compte> ./scripts/destroy.sh
+AWS_PROFILE=<profile> EXPECTED_ACCOUNT_ID=<account> ./scripts/destroy.sh
 ```
 
-Supprimer d'abord le scénario 2 s'il est déployé : il utilise cette Knowledge Base.
+Delete scenario 2 first if it is deployed: it uses this Knowledge Base.
 
-## Références
+## References
 
 - [Build enterprise search for agents with Amazon Bedrock Managed Knowledge Base](https://aws.amazon.com/blogs/machine-learning/build-enterprise-search-for-agents-with-amazon-bedrock-managed-knowledge-base/)
-- [Connecteur Amazon S3 d'une Knowledge Base managée](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-managed-ds-s3.html)
+- [Amazon S3 connector for a managed Knowledge Base](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-managed-ds-s3.html)
 - [Service role for managed Amazon Bedrock Knowledge Bases](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-managed-permissions.html)
-- [Contextual grounding check avec ApplyGuardrail](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html)
+- [Contextual grounding check with ApplyGuardrail](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html)
 - [Terraform `aws_bedrockagent_knowledge_base`](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/bedrockagent_knowledge_base)

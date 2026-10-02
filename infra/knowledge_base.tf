@@ -6,7 +6,7 @@ locals {
   partition  = data.aws_partition.current.partition
 }
 
-# ---------- Role de service de la Knowledge Base ----------
+# ---------- Knowledge Base service role ----------
 
 data "aws_iam_policy_document" "kb_trust" {
   statement {
@@ -62,13 +62,13 @@ resource "aws_iam_role_policy" "kb_read_docs" {
   policy = data.aws_iam_policy_document.kb_read_docs.json
 }
 
-# ---------- Knowledge Base managee ----------
-# Le service gere le parsing, le modele d'embedding, le stockage et la recherche hybride.
-# Requetes : Retrieve avec managedSearchConfiguration (RetrieveAndGenerate n'existe pas ici).
+# ---------- Managed Knowledge Base ----------
+# The service handles parsing, the embedding model, storage and hybrid search.
+# Queries: Retrieve with managedSearchConfiguration (RetrieveAndGenerate does not exist here).
 
 resource "aws_bedrockagent_knowledge_base" "docs" {
   name        = "${var.project_name}-kb"
-  description = "Documentation technique fournisseurs (notices, codes defauts, procedures)"
+  description = "Supplier technical documentation (manuals, fault codes, procedures)"
   role_arn    = aws_iam_role.kb.arn
 
   knowledge_base_configuration {
@@ -87,7 +87,7 @@ resource "aws_bedrockagent_data_source" "docs" {
   data_deletion_policy = "DELETE"
 
   data_source_configuration {
-    # Une Knowledge Base managee utilise les connecteurs managees, pas la source "S3" classique.
+    # A managed Knowledge Base uses managed connectors, not the classic "S3" data source.
     type = "MANAGED_KNOWLEDGE_BASE_CONNECTOR"
     managed_knowledge_base_connector_configuration {
       connector_parameters = jsonencode({
@@ -99,14 +99,14 @@ resource "aws_bedrockagent_data_source" "docs" {
         }
         filterConfiguration = {
           inclusionPrefixes = ["docs/"]
-          # Valeur par defaut du service, declaree pour que Terraform ne voie pas de derive.
+          # Service default, declared so that Terraform sees no drift.
           maxFileSizeInMegaBytes = "500"
         }
         aclEnabled = false
       })
 
-      # Extraction des images (schemas, tableaux en image) : activee par defaut par le service.
-      # Utile pour des notices fournisseurs pleines de schemas.
+      # Image extraction (diagrams, tables as images): enabled by default by the service.
+      # Useful for supplier manuals full of diagrams.
       media_extraction_configuration {
         image_extraction_configuration {
           image_extraction_status = "ENABLED"

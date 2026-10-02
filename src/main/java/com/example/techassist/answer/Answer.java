@@ -3,32 +3,32 @@ package com.example.techassist.answer;
 import java.util.List;
 
 /**
- * Reponse renvoyee a l'application mobile.
+ * Answer returned to the mobile app.
  *
- * @param answer     texte de la reponse
- * @param status     ANSWERED, NOT_FOUND (rien dans la doc) ou BLOCKED (controle d'ancrage)
- * @param sources    passages utilises, numerotes comme dans la reponse
- * @param usage      consommation, pour le suivi du cout par question
- * @param grounding  scores du controle d'ancrage (null si le garde-fou est desactive)
+ * @param answer     answer text
+ * @param status     ANSWERED, NOT_FOUND (nothing in the documentation) or BLOCKED (grounding check)
+ * @param sources    passages used, numbered as in the answer
+ * @param usage      consumption, to track the cost per question
+ * @param grounding  grounding check scores (null when no check was run)
  */
 public record Answer(String answer, Status status, List<Source> sources, Usage usage, Grounding grounding) {
 
     public enum Status { ANSWERED, NOT_FOUND, BLOCKED }
 
-    public record Source(int index, String document, String modele, Double score) { }
+    public record Source(int index, String document, String model, Double score) { }
 
     /**
-     * @param modelId         modele utilise (null si aucun appel au modele)
-     * @param inputTokens     tokens en entree
-     * @param outputTokens    tokens en sortie
-     * @param guardrailUnits  unites de texte facturees par le controle d'ancrage
-     * @param latencyMs       temps total de traitement cote serveur
+     * @param modelId         model used (null if the model was not called)
+     * @param inputTokens     input tokens
+     * @param outputTokens    output tokens
+     * @param guardrailUnits  text units billed by the grounding check
+     * @param latencyMs       total server-side processing time
      */
     public record Usage(String modelId, int inputTokens, int outputTokens, int guardrailUnits, long latencyMs) { }
 
     /**
-     * @param groundingScore  la reponse est-elle fondee sur la documentation (0 a 1)
-     * @param relevanceScore  la reponse repond-elle a la question (0 a 1)
+     * @param groundingScore  is the answer grounded in the documentation (0 to 1)
+     * @param relevanceScore  does the answer address the question (0 to 1)
      */
     public record Grounding(Double groundingScore, Double relevanceScore) { }
 }

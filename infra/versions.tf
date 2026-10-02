@@ -4,14 +4,14 @@ terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
-      # 6.56.0 : premiere version qui supporte les Knowledge Bases managees (type = "MANAGED").
+      # Managed Knowledge Bases (type = "MANAGED") require a recent 6.x provider; tested with 6.67.
       version = ">= 6.67.0, < 7.0.0"
     }
   }
 
-  # Etat local pour la demo. En equipe, utiliser un backend S3 (verrouillage natif use_lockfile) :
+  # Local state for the demo. In a team, use an S3 backend (native locking with use_lockfile):
   # backend "s3" {
-  #   bucket       = "<bucket-etat-terraform>"
+  #   bucket       = "<terraform-state-bucket>"
   #   key          = "techassist/demo1.tfstate"
   #   region       = "eu-west-1"
   #   use_lockfile = true
@@ -21,7 +21,7 @@ terraform {
 
 provider "aws" {
   region = var.region
-  # Garde-fou : Terraform refuse de toucher un autre compte que celui attendu.
+  # Safety net: Terraform refuses to touch any account other than the expected one.
   allowed_account_ids = [var.account_id]
 
   default_tags {

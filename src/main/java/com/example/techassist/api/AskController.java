@@ -11,9 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Point d'entree REST, pense pour etre integre dans le backend existant de l'application
- * mobile. Il n'embarque pas d'authentification : il doit etre expose derriere
- * l'authentification du backend (voir README, section securite).
+ * REST entry point, designed to be plugged into the existing mobile app backend. It carries no
+ * authentication: it must be exposed behind the backend authentication (see README, security).
  */
 @RestController
 @RequestMapping("/api")
@@ -31,8 +30,8 @@ public class AskController {
     }
 
     /**
-     * @param question       question du technicien
-     * @param equipmentModel modele de l'equipement si connu (filtre la documentation)
+     * @param question       the technician's question
+     * @param equipmentModel equipment model if known (filters the documentation)
      */
     public record AskRequest(
             @NotBlank @Size(max = 1000) String question,

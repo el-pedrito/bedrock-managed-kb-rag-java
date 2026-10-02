@@ -11,21 +11,22 @@ import software.amazon.awssdk.awscore.exception.AwsServiceException;
 import software.amazon.awssdk.core.exception.SdkException;
 
 /**
- * Traduit les erreurs en reponses HTTP propres, sans exposer le detail interne au client.
+ * Turns errors into clean HTTP responses, without exposing internal details to the client.
  *
- * <p>Les erreurs AWS peuvent arriver telles quelles (appel SDK direct : Retrieve, ApplyGuardrail)
- * ou enveloppees par Spring AI (Converse via ChatClient, {@code TransientAiException} /
- * {@code NonTransientAiException}). On cherche donc l'erreur AWS dans toute la chaine des causes :
- * le statut HTTP ne depend pas de la couche qui a leve l'exception.
+ * <p>AWS errors can arrive as is (direct SDK calls: Retrieve, ApplyGuardrail) or wrapped by
+ * Spring AI (Converse through ChatClient, {@code TransientAiException} /
+ * {@code NonTransientAiException}). So we look for the AWS error along the whole cause chain:
+ * the HTTP status does not depend on the layer that raised the exception.
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
+    // Error details stay in French: they are shown to French-speaking technicians.
     @ExceptionHandler(RuntimeException.class)
     ProblemDetail handle(RuntimeException e) {
-        // Erreurs HTTP deja qualifiees par Spring (404, 405...) : statut d'origine conserve.
+        // HTTP errors already qualified by Spring (404, 405...): keep the original status.
         if (e instanceof ErrorResponse response) {
             return response.getBody();
         }
@@ -45,7 +46,7 @@ public class ApiExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, "Erreur interne.");
     }
 
-    /** Premiere erreur AWS dans la chaine des causes (bornee, en cas de cycle). */
+    /** First AWS error in the cause chain (bounded, in case of a cycle). */
     static SdkException awsCause(Throwable e) {
         Throwable current = e;
         for (int depth = 0; current != null && depth < 10; depth++) {
@@ -57,7 +58,7 @@ public class ApiExceptionHandler {
         return null;
     }
 
-    /** Throttling de Converse/ApplyGuardrail (bedrock-runtime) ou de Retrieve (bedrock-agent-runtime). */
+    /** Throttling of Converse/ApplyGuardrail (bedrock-runtime) or of Retrieve (bedrock-agent-runtime). */
     private static boolean isThrottling(SdkException e) {
         return e instanceof software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException
                 || e instanceof software.amazon.awssdk.services.bedrockagentruntime.model.ThrottlingException

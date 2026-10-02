@@ -14,13 +14,13 @@ import software.amazon.awssdk.services.bedrockagentruntime.BedrockAgentRuntimeCl
 import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
 
 /**
- * Cablage de l'approche hybride :
+ * Wiring of the hybrid approach:
  * <ul>
- *   <li>Spring AI : {@link ChatClient} (generation) et {@link VectorStore} (abstraction de recherche).</li>
- *   <li>SDK AWS : {@code Retrieve} sur la Knowledge Base managee et {@code ApplyGuardrail}.</li>
+ *   <li>Spring AI: {@link ChatClient} (generation) and {@link VectorStore} (retrieval abstraction).</li>
+ *   <li>AWS SDK: {@code Retrieve} on the managed Knowledge Base, and {@code ApplyGuardrail}.</li>
  * </ul>
- * Les credentials viennent de la chaine par defaut (role IAM en production, profil local en
- * developpement) : aucune cle statique dans le code ni dans la configuration.
+ * Credentials come from the default chain (IAM role in production, local profile in development):
+ * no static key in the code or in the configuration.
  */
 @Configuration
 public class AwsClientsConfig {
@@ -36,9 +36,9 @@ public class AwsClientsConfig {
     }
 
     /**
-     * Client bedrock-runtime unique : utilise par {@link GroundingGuard} (ApplyGuardrail) ET repris
-     * par l'auto-configuration Spring AI pour Converse (elle consomme un BedrockRuntimeClient s'il
-     * existe). D'ou un timeout dimensionne pour une generation complete.
+     * Single bedrock-runtime client: used by {@link GroundingGuard} (ApplyGuardrail) AND picked up by
+     * the Spring AI auto-configuration for Converse (it consumes an existing BedrockRuntimeClient).
+     * Hence a timeout sized for a full generation.
      */
     @Bean(destroyMethod = "close")
     BedrockRuntimeClient bedrockRuntimeClient(TechAssistProperties props) {
@@ -60,7 +60,7 @@ public class AwsClientsConfig {
         return new GroundingGuard(bedrockRuntimeClient, props.guardrailId(), props.guardrailVersion());
     }
 
-    /** ChatClient configure par cette application : modele EU, temperature 0, plafond de tokens. */
+    /** ChatClient configured for this application: EU model, temperature 0, token cap. */
     @Bean
     ChatClient chatClient(ChatClient.Builder builder, TechAssistProperties props) {
         return builder
