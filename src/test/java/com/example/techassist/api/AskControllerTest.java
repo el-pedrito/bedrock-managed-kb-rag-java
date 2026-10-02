@@ -26,7 +26,7 @@ class AskControllerTest {
     void returnsTheAnswer() throws Exception {
         when(answerService.ask(anyString(), eq("Condensa 24"))).thenReturn(new Answer("Pression trop basse [1]",
                 Answer.Status.ANSWERED, List.of(new Answer.Source(1, "notice.md", "Condensa 24", 0.8)),
-                new Answer.Usage("eu.model", 900, 60, 1200)));
+                new Answer.Usage("eu.model", 900, 60, 2, 1200), new Answer.Grounding(0.93, 0.88)));
 
         mvc.perform(post("/api/ask").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"question\":\"Que signifie F28 ?\",\"equipmentModel\":\"Condensa 24\"}"))
@@ -39,6 +39,38 @@ class AskControllerTest {
     void rejectsAnEmptyQuestion() throws Exception {
         mvc.perform(post("/api/ask").contentType(MediaType.APPLICATION_JSON).content("{\"question\":\"  \"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void throttlingWrappedBySpringAiIsStillA429() throws Exception {
+        var throttled = software.amazon.awssdk.services.bedrockruntime.model.ThrottlingException.builder()
+                .message("Too many requests").build();
+        when(answerService.ask(anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new org.springframework.ai.retry.TransientAiException("converse failed", throttled));
+
+        mvc.perform(post("/api/ask").contentType(MediaType.APPLICATION_JSON).content("{\"question\":\"F28 ?\"}"))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void awsFailureWrappedBySpringAiIsA502WithoutDetail() throws Exception {
+        var failure = software.amazon.awssdk.core.exception.SdkClientException.create("arn:aws:secret-detail");
+        when(answerService.ask(anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new RuntimeException(new org.springframework.ai.retry.NonTransientAiException("x", failure)));
+
+        mvc.perform(post("/api/ask").contentType(MediaType.APPLICATION_JSON).content("{\"question\":\"F28 ?\"}"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("arn"))));
+    }
+
+    @Test
+    void unexpectedErrorIsA500WithoutDetail() throws Exception {
+        when(answerService.ask(anyString(), org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new IllegalStateException("arn:aws:secret-detail"));
+
+        mvc.perform(post("/api/ask").contentType(MediaType.APPLICATION_JSON).content("{\"question\":\"F28 ?\"}"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("arn"))));
     }
 
     private MockMvc mockMvc() {
