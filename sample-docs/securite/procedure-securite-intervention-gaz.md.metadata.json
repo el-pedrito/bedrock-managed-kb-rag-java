@@ -1,0 +1,32 @@
+{
+  "metadataAttributes": {
+    "manufacturer": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "Internal"
+      },
+      "includeForEmbedding": true
+    },
+    "model": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "ALL"
+      },
+      "includeForEmbedding": true
+    },
+    "equipment_type": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "all"
+      },
+      "includeForEmbedding": false
+    },
+    "document_type": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "safety_procedure"
+      },
+      "includeForEmbedding": false
+    }
+  }
+}

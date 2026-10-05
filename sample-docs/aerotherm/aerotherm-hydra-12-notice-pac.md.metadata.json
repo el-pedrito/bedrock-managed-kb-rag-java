@@ -1,0 +1,32 @@
+{
+  "metadataAttributes": {
+    "manufacturer": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "Aerotherm"
+      },
+      "includeForEmbedding": true
+    },
+    "model": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "Hydra 12"
+      },
+      "includeForEmbedding": true
+    },
+    "equipment_type": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "heat_pump"
+      },
+      "includeForEmbedding": false
+    },
+    "document_type": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "technical_manual"
+      },
+      "includeForEmbedding": false
+    }
+  }
+}

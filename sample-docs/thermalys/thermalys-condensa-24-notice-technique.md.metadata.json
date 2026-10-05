@@ -1,0 +1,32 @@
+{
+  "metadataAttributes": {
+    "manufacturer": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "Thermalys"
+      },
+      "includeForEmbedding": true
+    },
+    "model": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "Condensa 24"
+      },
+      "includeForEmbedding": true
+    },
+    "equipment_type": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "gas_boiler"
+      },
+      "includeForEmbedding": false
+    },
+    "document_type": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "technical_manual"
+      },
+      "includeForEmbedding": false
+    }
+  }
+}

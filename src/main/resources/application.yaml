@@ -1,0 +1,30 @@
+# Unauthenticated API: listens on localhost only by default. Only expose it (SERVER_ADDRESS)
+# behind the backend authentication.
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+
+spring:
+  application:
+    name: bedrock-managed-kb-rag
+  ai:
+    bedrock:
+      aws:
+        region: ${AWS_REGION:eu-west-1}
+    # The model and its options are set in AwsClientsConfig from techassist.model-id.
+
+techassist:
+  region: ${AWS_REGION:eu-west-1}
+  knowledge-base-id: ${KNOWLEDGE_BASE_ID}
+  # European inference profile: inference stays in AWS Regions in Europe.
+  model-id: ${MODEL_ID:eu.anthropic.claude-haiku-4-5-20251001-v1:0}
+  # Mandatory guardrail: without GUARDRAIL_ID and GUARDRAIL_VERSION the application refuses to start.
+  guardrail-id: ${GUARDRAIL_ID:}
+  guardrail-version: ${GUARDRAIL_VERSION:}
+  max-results: ${MAX_RESULTS:5}
+  max-tokens: ${MAX_TOKENS:800}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

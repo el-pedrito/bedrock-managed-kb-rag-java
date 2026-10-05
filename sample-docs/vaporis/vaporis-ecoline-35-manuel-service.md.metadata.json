@@ -1,0 +1,32 @@
+{
+  "metadataAttributes": {
+    "manufacturer": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "Vaporis"
+      },
+      "includeForEmbedding": true
+    },
+    "model": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "Ecoline 35"
+      },
+      "includeForEmbedding": true
+    },
+    "equipment_type": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "gas_boiler"
+      },
+      "includeForEmbedding": false
+    },
+    "document_type": {
+      "value": {
+        "type": "STRING",
+        "stringValue": "service_manual"
+      },
+      "includeForEmbedding": false
+    }
+  }
+}
