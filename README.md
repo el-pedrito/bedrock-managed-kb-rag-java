@@ -167,3 +167,7 @@ Delete scenario 2 first if it is deployed: it uses this Knowledge Base.
 - [Service role for managed Amazon Bedrock Knowledge Bases](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-managed-permissions.html)
 - [Contextual grounding check with ApplyGuardrail](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-contextual-grounding-check.html)
 - [Terraform `aws_bedrockagent_knowledge_base`](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/bedrockagent_knowledge_base)
+
+## License
+
+This project is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file.
